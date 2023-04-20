@@ -205,7 +205,6 @@ typedef unsigned int uint32;
 // block size
 
 static uint32 blocksize = 1024;
-static uint32 log_blocksize = 0;
 
 #define SUPERBLOCK_OFFSET	1024
 #define SUPERBLOCK_SIZE		1024
@@ -554,6 +553,25 @@ swab32(uint32 val)
 {
 	return ((val>>24) | ((val>>8)&0xFF00) |
 			((val<<8)&0xFF0000) | (val<<24));
+}
+
+static uint32_t
+ifreg_blocks(uint64_t bytes, uint16_t lbs)
+{
+	uint16_t shl = 10u + lbs;
+	uint16_t bs = 1u << shl;
+	uint32_t blocks = (bytes+bs-1) >> shl;
+
+	uint32_t sh0 = shl-2,
+		 sh1 = sh0+sh0,
+		 sh2 = sh1+sh0;               // log(indirections per block) per depth
+	uint32_t fn0 = 12u,                   // first node of single indirection
+	         fn1 = fn0 + (1u << sh0),     // first node of double indirection
+	         fn2 = fn1 + (1u << sh1);     // first node of trebly indirection
+	return blocks
+	     + (blocks < fn0? 0 : (1 + ((blocks-fn0) >> sh0)))
+	     + (blocks < fn1? 0 : (1 + ((blocks-fn1) >> sh1)))
+	     + (blocks < fn2? 0 : (1 + ((blocks-fn2) >> sh2)));
 }
 
 static inline int
@@ -2380,7 +2398,7 @@ add2fs_from_tarball(filesystem *fs, uint32 this_nod, FILE * fh, int squash_uids,
 				case '0':
 				case 0:
 				case '7':
-					stats->nblocks += (filesize + BLOCKSIZE - 1) / BLOCKSIZE;
+					stats->nblocks += ifreg_blocks(filesize, BLOCKSIZE >> 11);
 				case '1':
 				case '6':
 				case '3':
@@ -2800,24 +2818,6 @@ add2fs_from_file(filesystem *fs, uint32 this_nod, FILE * fh, uint32 fs_timestamp
 		free(path2);
 }
 
-static uint32_t
-ifreg_blocks(uint64_t bytes, uint16_t lbs)
-{
-	uint16_t shl = 10u + lbs;
-	uint16_t bs = 1u << shl;
-	uint32_t blocks = (bytes+bs-1) >> shl;
-
-	uint32_t sh0 = shl-2,
-		 sh1 = sh0+sh0,
-		 sh2 = sh1+sh0;               // log(indirections per block) per depth
-	uint32_t fn0 = 12u,                   // first node of single indirection
-	         fn1 = fn0 + (1u << sh0),     // first node of double indirection
-	         fn2 = fn1 + (1u << sh1);     // first node of trebly indirection
-	return blocks
-	     + (blocks < fn0? 0 : (1 + ((blocks-fn0) >> sh0)))
-	     + (blocks < fn1? 0 : (1 + ((blocks-fn1) >> sh1)))
-	     + (blocks < fn2? 0 : (1 + ((blocks-fn2) >> sh2)));
-}
 // adds a tree of entries to the filesystem from current dir
 static void
 add2fs_from_dir(filesystem *fs, uint32 this_nod, int squash_uids, int squash_perms, uint32 fs_timestamp, struct stats *stats)
@@ -2860,7 +2860,7 @@ add2fs_from_dir(filesystem *fs, uint32 this_nod, int squash_uids, int squash_per
 					stats->ninodes++;
 					break;
 				case S_IFREG:
-					stats->nblocks += ifreg_blocks((st.st_size + BLOCKSIZE - 1), log_blocksize);
+					stats->nblocks += ifreg_blocks((st.st_size + BLOCKSIZE - 1), BLOCKSIZE >> 11);
 				case S_IFCHR:
 				case S_IFBLK:
 				case S_IFIFO:
@@ -3920,10 +3920,6 @@ main(int argc, char **argv)
 
 	if(blocksize != 1024 && blocksize != 2048 && blocksize != 4096)
 		error_msg_and_die("Valid block sizes: 1024, 2048 or 4096.");
-
-	for (int i=0; i<22; ++i)
-		if ((1u << (10u + i)) == blocksize)
-			log_blocksize = i;
 
 	if(creator_os < 0)
 		error_msg_and_die("Creator OS unknown.");
