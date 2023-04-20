@@ -2568,7 +2568,7 @@ add2fs_from_tarball(filesystem *fs, uint32 this_nod, FILE * fh, int squash_uids,
 					stats->ninodes++;
 					break;
 				case S_IFREG:
-					stats->nblocks += (filesize + BLOCKSIZE - 1) / BLOCKSIZE;
+					stats->nblocks += ifreg_blocks(filesize, BLOCKSIZE >> 11);
 				case S_IFCHR:
 				case S_IFBLK:
 				case S_IFIFO:
